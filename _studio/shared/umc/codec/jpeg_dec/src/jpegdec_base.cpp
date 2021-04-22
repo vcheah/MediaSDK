@@ -1220,7 +1220,7 @@ comp_id_match:
   return JPEG_OK;
 } // CJPEGDecoderBase::ParseSOS()
 
-JERRCODE CJPEGDecoderBase::ParseJPEGBitStream(JOPERATION op)
+JERRCODE CJPEGDecoderBase::ParseJPEGBitStream(JOPERATION op, mfxExtDecodeErrorReport* pDecodeErrorReport)
 {
   JERRCODE jerr = JPEG_OK;
 
@@ -1344,6 +1344,8 @@ JERRCODE CJPEGDecoderBase::ParseJPEGBitStream(JOPERATION op)
       jerr = SkipMarker();
       if(JPEG_OK != jerr)
         return jerr;
+      if (pDecodeErrorReport)
+          pDecodeErrorReport->ErrorTypes |= MFX_ERROR_UNKNOWN_MARKER;
 
       break;
     }
@@ -1397,14 +1399,15 @@ JERRCODE CJPEGDecoderBase::ReadHeader(
   int*    nchannels,
   JCOLOR* color,
   JSS*    sampling,
-  int*    precision)
+  int*    precision,
+  mfxExtDecodeErrorReport* pDecodeErrorReport)
 {
   int      du_width;
   int      du_height;
   JERRCODE jerr;
 
   // parse bitstream up to SOS marker
-  jerr = ParseJPEGBitStream(JO_READ_HEADER);
+  jerr = ParseJPEGBitStream(JO_READ_HEADER, pDecodeErrorReport);
 
   if(JPEG_OK != jerr)
   {

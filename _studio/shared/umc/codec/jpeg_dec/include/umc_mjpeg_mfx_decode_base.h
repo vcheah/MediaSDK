@@ -81,7 +81,7 @@ public:
     Status FindStartOfImage(MediaData * in);
 
     // All memory sizes should come in size_t type
-    Status _GetFrameInfo(const uint8_t* pBitStream, size_t nSize);
+    Status _GetFrameInfo(const uint8_t* pBitStream, size_t nSize, MediaData *in);
 
     Status SetRotation(uint16_t rotation);
 

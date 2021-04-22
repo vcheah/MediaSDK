@@ -211,6 +211,9 @@ public:
             if (pDecodeErrorReport->ErrorTypes & MFX_ERROR_FRAME_GAP)
                 msdk_printf(MSDK_STRING("[Error] Frame Gap Error detected!\n"));
 
+            if (pDecodeErrorReport->ErrorTypes & MFX_ERROR_UNKNOWN_MARKER)
+                msdk_printf(MSDK_STRING("[Error] unknown marker Error detected!\n"));
+
         }
     }
 #endif

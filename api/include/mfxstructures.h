@@ -1861,11 +1861,12 @@ MFX_PACK_END()
 #if (MFX_VERSION >= 1025)
 /*ErrorTypes in mfxExtDecodeErrorReport*/
 enum {
-    MFX_ERROR_PPS           = (1 << 0),
-    MFX_ERROR_SPS           = (1 << 1),
-    MFX_ERROR_SLICEHEADER   = (1 << 2),
-    MFX_ERROR_SLICEDATA     = (1 << 3),
-    MFX_ERROR_FRAME_GAP     = (1 << 4),
+    MFX_ERROR_PPS            = (1 << 0),
+    MFX_ERROR_SPS            = (1 << 1),
+    MFX_ERROR_SLICEHEADER    = (1 << 2),
+    MFX_ERROR_SLICEDATA      = (1 << 3),
+    MFX_ERROR_FRAME_GAP      = (1 << 4),
+    MFX_ERROR_UNKNOWN_MARKER = (1 << 5),
 };
 
 MFX_PACK_BEGIN_USUAL_STRUCT()

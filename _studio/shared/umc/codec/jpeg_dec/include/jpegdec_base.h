@@ -29,6 +29,7 @@
 #include "colorcomp.h"
 #include "membuffin.h"
 #include "bitstreamin.h"
+#include "mfxstructures.h"
 
 class CJPEGDecoderBase
 {
@@ -48,7 +49,8 @@ public:
     int*     nchannels,
     JCOLOR*  color,
     JSS*     sampling,
-    int*     precision);
+    int*     precision,
+    mfxExtDecodeErrorReport* pDecodeErrorReport);
 
   int  GetNumDecodedBytes(void)        { return m_BitStreamIn.GetNumUsedBytes(); }
 
@@ -131,7 +133,7 @@ public:
 
   JERRCODE FindSOI();
 
-  virtual JERRCODE ParseJPEGBitStream(JOPERATION op);
+  virtual JERRCODE ParseJPEGBitStream(JOPERATION op, mfxExtDecodeErrorReport* pDecodeErrorReport);
   JERRCODE ParseSOI(void);
   JERRCODE ParseEOI(void);
   JERRCODE ParseAPP0(void);

@@ -301,7 +301,7 @@ Status MJPEGVideoDecoderBaseMFX::DecodeHeader(MediaData* in)
         }
     }
 
-    Status sts = _GetFrameInfo((uint8_t*)in->GetDataPointer(), in->GetDataSize());
+    Status sts = _GetFrameInfo((uint8_t*)in->GetDataPointer(), in->GetDataSize(), in);
 
     if (sts == UMC_ERR_NOT_ENOUGH_DATA &&
         (!(in->GetFlags() & MediaData::FLAG_VIDEO_DATA_NOT_FULL_FRAME) ||
@@ -319,13 +319,16 @@ Status MJPEGVideoDecoderBaseMFX::SetRotation(uint16_t /* rotation */)
     return UMC_OK;
 }
 
-Status MJPEGVideoDecoderBaseMFX::_GetFrameInfo(const uint8_t* pBitStream, size_t nSize)
+Status MJPEGVideoDecoderBaseMFX::_GetFrameInfo(const uint8_t* pBitStream, size_t nSize, MediaData *in)
 {
     int32_t   nchannels;
     int32_t   precision;
     JSS      sampling;
     JCOLOR   color;
     JERRCODE jerr;
+
+    MediaData::AuxInfo* aux = (in) ? in->GetAuxInfo(MFX_EXTBUFF_DECODE_ERROR_REPORT) : NULL;
+    mfxExtDecodeErrorReport* pDecodeErrorReport = (aux) ? reinterpret_cast<mfxExtDecodeErrorReport*>(aux->ptr) : NULL;
 
     if (!m_IsInit)
         return UMC_ERR_NOT_INITIALIZED;
@@ -335,7 +338,7 @@ Status MJPEGVideoDecoderBaseMFX::_GetFrameInfo(const uint8_t* pBitStream, size_t
         return UMC_ERR_FAILED;
 
     jerr = m_decBase->ReadHeader(
-        &m_frameDims.width,&m_frameDims.height,&nchannels,&color,&sampling,&precision);
+        &m_frameDims.width,&m_frameDims.height,&nchannels,&color,&sampling,&precision,pDecodeErrorReport);
 
     if(JPEG_ERR_BUFF == jerr)
         return UMC_ERR_NOT_ENOUGH_DATA;

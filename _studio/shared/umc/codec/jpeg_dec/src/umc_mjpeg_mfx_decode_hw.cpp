@@ -237,7 +237,7 @@ Status MJPEGVideoDecoderMFX_HW::_DecodeHeader(int32_t* cnt)
 
     int32_t frameChannels, framePrecision;
     jerr = m_decBase->ReadHeader(
-        &size.width, &size.height, &frameChannels, &m_color, &sampling, &framePrecision);
+        &size.width, &size.height, &frameChannels, &m_color, &sampling, &framePrecision, NULL);
 
     if(JPEG_ERR_BUFF == jerr)
         return UMC_ERR_NOT_ENOUGH_DATA;

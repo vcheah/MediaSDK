@@ -320,6 +320,10 @@ mfxStatus vaapiFrameAllocator::AllocImpl(mfxFrameAllocRequest *request, mfxFrame
             {
                 format = VA_RT_FORMAT_YUV420;
             }
+            else if (va_fourcc == VA_FOURCC_P010) //P010 is a planar 4:2:0 YUV with interleaved UV plane, 10 bits per channel
+            {
+                format = VA_RT_FORMAT_YUV420_10;
+            }
             else if ((va_fourcc == VA_FOURCC_UYVY) || (va_fourcc == VA_FOURCC_YUY2))
             {
                 format = VA_RT_FORMAT_YUV422;

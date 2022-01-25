@@ -206,6 +206,11 @@ drmRenderer::drmRenderer(int fd, mfxI32 monitorType)
   , m_pCurrentRenderTargetSurface(NULL)
 {
     bool res = false;
+    m_sentHDR = false;
+
+    if ( m_drmlib.drmSetClientCap(m_fd, DRM_CLIENT_CAP_ATOMIC, 1) != 0)
+        printf("Failed to set atomic!\n");
+    
     uint32_t connectorType = getConnectorType(monitorType);
 
     if (monitorType == MFX_MONITOR_AUTO) {
@@ -230,12 +235,56 @@ drmRenderer::drmRenderer(int fd, mfxI32 monitorType)
 
 drmRenderer::~drmRenderer()
 {
+    drm_destroy_hdrinfo();
     m_drmlib.drmModeFreeCrtc(m_crtc);
     if (m_bufmgr)
     {
         m_drmintellib.drm_intel_bufmgr_destroy(m_bufmgr);
         m_bufmgr = NULL;
     }
+}
+
+drmModeObjectPropertiesPtr drmRenderer::getProperties(int fd, int objectId, int32_t objectTypeId)
+{
+    return m_drmlib.drmModeObjectGetProperties(fd, objectId, objectTypeId);
+}
+
+bool drmRenderer::getCRTCProperties(int fd, int crtcId)
+{    
+    if (m_crtcProperties == NULL)
+        m_crtcProperties = getProperties(fd, crtcId, DRM_MODE_OBJECT_CRTC);
+    return m_crtcProperties != NULL;
+}
+
+
+uint32_t  drmRenderer::getCRTCPropertyId(const char *propNameToFind)
+{
+    if (!getCRTCProperties(m_fd, m_crtcID))
+    {
+        return 0;
+    }
+
+    drmModePropertyPtr property;
+    uint32_t i, id = 0;
+    for (i = 0; i < m_crtcProperties->count_props; i++) {
+        property = m_drmlib.drmModeGetProperty(m_fd, m_crtcProperties->props[i]);
+        if (!strcmp(property->name, propNameToFind))
+            id = property->prop_id;
+
+        m_drmlib.drmModeFreeProperty(property);
+
+        if (id)
+            break;
+    }
+    return id;
+}
+
+
+bool drmRenderer::getConnectorProperties(int fd, int connectorId)
+{
+    if (m_ConnectorProperties == NULL)
+        m_ConnectorProperties = getProperties(fd, connectorId, DRM_MODE_OBJECT_CONNECTOR);
+    return m_ConnectorProperties != NULL;
 }
 
 bool drmRenderer::getConnector(drmModeRes *resource, uint32_t connector_type)
@@ -252,7 +301,7 @@ bool drmRenderer::getConnector(drmModeRes *resource, uint32_t connector_type)
                     msdk_printf(MSDK_STRING("drmrender: trying connection: %s\n"), getConnectorName(connector->connector_type));
                     m_connector_type = connector->connector_type;
                     m_connectorID = connector->connector_id;
-                    found = setupConnection(resource, connector);
+                    found = setupConnection(resource, connector);                    
                     if (found) msdk_printf(MSDK_STRING("drmrender: succeeded...\n"));
                     else msdk_printf(MSDK_STRING("drmrender: failed...\n"));
                 } else if ((connector_type != DRM_MODE_CONNECTOR_Unknown)) {
@@ -264,7 +313,7 @@ bool drmRenderer::getConnector(drmModeRes *resource, uint32_t connector_type)
         }
     }
     msdk_printf(MSDK_STRING("drmrender: error: requested monitor not available\n"));
-    return false;
+    return found;
 }
 
 bool drmRenderer::setupConnection(drmModeRes *resource, drmModeConnector* connector)
@@ -339,17 +388,23 @@ bool drmRenderer::getPlane()
     if (!planes) {
         return false;
     }
+
+    bool isPlaneFound = false;
     for (uint32_t i = 0; i < planes->count_planes; ++i) {
         drmModePlanePtr plane = m_drmlib.drmModeGetPlane(m_fd, planes->planes[i]);
         if (plane) {
             if (plane->possible_crtcs & (1 << m_crtcIndex)) {
                 for (uint32_t j = 0; j < plane->count_formats; ++j) {
-                    if ((plane->formats[j] == DRM_FORMAT_XRGB8888)
-                        || (plane->formats[j] == DRM_FORMAT_NV12)) {
-                        m_planeID = plane->plane_id;
-                        m_drmlib.drmModeFreePlane(plane);
-                        m_drmlib.drmModeFreePlaneResources(planes);
-                        return true;
+                    if (plane->formats[j] == DRM_FORMAT_XRGB8888
+                        || (plane->formats[j] == DRM_FORMAT_NV12)
+                        || (plane->formats[j] == DRM_FORMAT_P010)
+                        || (plane->formats[j] == DRM_FORMAT_ARGB2101010)) {
+                        m_planeID = plane->plane_id;                        
+                        isPlaneFound = true;
+                        if (plane->formats[j] == DRM_FORMAT_P010
+                            || (plane->formats[j] == DRM_FORMAT_ARGB2101010)) {
+                            m_planeFMT = plane->formats[j];
+                        }                        
                     }
                 }
             }
@@ -357,7 +412,7 @@ bool drmRenderer::getPlane()
         }
     }
     m_drmlib.drmModeFreePlaneResources(planes);
-    return false;
+    return isPlaneFound;
 }
 
 bool drmRenderer::setMaster()
@@ -388,6 +443,181 @@ bool drmRenderer::restore()
   }
   dropMaster();
   return true;
+}
+
+uint32_t  drmRenderer::getConnectorPropertyId(const char *propNameToFind)
+{
+    uint32_t id = 0;
+    if (!getConnectorProperties(m_fd, m_connectorID))
+    {
+        return id;
+    }
+
+    drmModePropertyPtr property;
+    uint32_t i;
+    for (i = 0; i < m_ConnectorProperties->count_props; i++) {
+        property = m_drmlib.drmModeGetProperty(m_fd, m_ConnectorProperties->props[i]);
+        if (!property)
+            continue;
+        
+        if (!strcmp(property->name, propNameToFind))
+            id = property->prop_id;
+
+        m_drmlib.drmModeFreeProperty(property);
+        property = NULL;
+
+        if (id)
+            break;
+    }
+    return id;
+}
+
+void drmRenderer::drm_send_bt2020_colorspace()
+{    
+    uint32_t property_colorspace_id = getConnectorPropertyId("Colorspace");
+    if(!property_colorspace_id)
+    {
+        printf("Failed to get drm colorspace property.\n");
+        return;
+    }
+
+    #define DRM_MODE_COLORIMETRY_BT2020_RGB			9
+    int ret = m_drmlib.drmModeObjectSetProperty(m_fd, m_connectorID, DRM_MODE_OBJECT_CONNECTOR, 
+                                        property_colorspace_id, DRM_MODE_COLORIMETRY_BT2020_RGB);
+    if (ret < 0)
+        printf("Failed to set connector colorspace for BT2020.\n");
+}
+
+void drmRenderer::drm_send_hdr(mfxFrameSurface1 * pSurface, bool enableHDR) {
+    uint32_t property_hdr_id = getConnectorPropertyId("HDR_OUTPUT_METADATA");
+    if(!property_hdr_id)
+    {
+        printf("Failed to get hdr metadata.n");
+        return;
+    }
+
+    struct drm_hdr_metadata *p = &m_hdr_metadata;
+    if(p->hdr_blob_id > 0)
+        m_drmlib.drmModeDestroyPropertyBlob(m_fd, p->hdr_blob_id);
+
+    if(p->mode_blob_id > 0)
+        m_drmlib.drmModeDestroyPropertyBlob(m_fd, p->mode_blob_id);
+    
+    drmModeAtomicReqPtr request = m_drmlib.drmModeAtomicAlloc();
+    if (!request)
+    {
+        printf("Failed to create atomic request.\n");
+        return;
+    }
+
+    int ret = 0;
+    if (enableHDR)
+    {
+        #define DRM_HDMI_STATIC_METADATA_TYPE1 1
+        p->data.metadata_type = DRM_HDMI_STATIC_METADATA_TYPE1;
+        p->data.hdmi_metadata_type1.metadata_type = DRM_HDMI_STATIC_METADATA_TYPE1;
+
+        // default PQ
+        // TODO: Check if Display has HDR caps
+        // TODO: Replace below hdr metadata with bitstream info so HDR panel can perform tonemapping
+        p->data.hdmi_metadata_type1.eotf = 2; // 1 = BT_1886, 2 = PQ e.g. ST.2084, 3 = HLG
+        if(p->data.hdmi_metadata_type1.eotf) {
+            //mfxExtContentLightLevelInfo* content_light = (mfxExtContentLightLevelInfo*) pSurface->Data.ExtParam[MFX_EXTBUFF_CONTENT_LIGHT_LEVEL_INFO];
+            mfxExtContentLightLevelInfo *content_light = new mfxExtContentLightLevelInfo();
+            content_light->MaxContentLightLevel = 1000;
+            content_light->MaxPicAverageLightLevel = 400;
+
+            //mfxExtMasteringDisplayColourVolume* mastering = (mfxExtMasteringDisplayColourVolume*) pSurface->Data.ExtParam[MFX_EXTBUFF_MASTERING_DISPLAY_COLOUR_VOLUME];
+            mfxExtMasteringDisplayColourVolume *mastering = new mfxExtMasteringDisplayColourVolume();
+            mastering->MinDisplayMasteringLuminance = .01*10000;
+            mastering->MaxDisplayMasteringLuminance = 1499;
+            mastering->DisplayPrimariesX[0] = .27174*50000;
+            mastering->DisplayPrimariesY[0] = .64516*50000;
+            mastering->DisplayPrimariesX[1] = .15250*50000;
+            mastering->DisplayPrimariesY[1] = .05376*50000;
+            mastering->DisplayPrimariesX[2] = .67058*50000;
+            mastering->DisplayPrimariesY[2] = .31476*50000;
+            mastering->WhitePointX = .28152*50000;
+            mastering->WhitePointY = .28446*50000;
+
+            if (content_light == NULL || mastering == NULL)
+            {
+                printf("Unable to get extbuff info for hdr!!\n");
+                return;
+            }
+            
+            p->data.hdmi_metadata_type1.display_primaries[0].x = mastering->DisplayPrimariesX[0];
+            p->data.hdmi_metadata_type1.display_primaries[0].y = mastering->DisplayPrimariesY[0];
+            p->data.hdmi_metadata_type1.display_primaries[1].x = mastering->DisplayPrimariesX[1];
+            p->data.hdmi_metadata_type1.display_primaries[1].y = mastering->DisplayPrimariesY[1];
+            p->data.hdmi_metadata_type1.display_primaries[2].x = mastering->DisplayPrimariesX[2];
+            p->data.hdmi_metadata_type1.display_primaries[2].y = mastering->DisplayPrimariesY[2];
+            
+            p->data.hdmi_metadata_type1.white_point.x = mastering->WhitePointX;
+            p->data.hdmi_metadata_type1.white_point.y = mastering->WhitePointY;
+
+            delete mastering;
+            delete content_light;
+            mastering = NULL;
+            content_light = NULL;
+        }
+
+        ret = m_drmlib.drmModeCreatePropertyBlob(m_fd, &p->data, sizeof(p->data), &p->hdr_blob_id);
+        if (ret != 0)
+            printf("Drm blob not created %d.\n", ret);
+    }
+    // Add CRTC Info    
+    ret =  m_drmlib.drmModeAtomicAddProperty(request, m_connectorID, getConnectorPropertyId("CRTC_ID"), m_crtcID);
+    if (ret < 0)
+    {
+        printf("Failed to set CRTC_ID %d\n", ret);
+    }        
+
+    ret =  m_drmlib.drmModeAtomicAddProperty(request, m_connectorID, property_hdr_id, (enableHDR) ? p->hdr_blob_id : 0);
+    if (ret < 0)
+    {
+        printf("Failed to set HDR blob %d\n", ret);
+    }
+
+    // Add MODE Info
+    ret = m_drmlib.drmModeCreatePropertyBlob(m_fd, &m_mode, sizeof(m_mode), &p->mode_blob_id);
+    if (ret != 0)
+        printf("Drm mode blob not created %d.\n", ret);
+
+    ret =  m_drmlib.drmModeAtomicAddProperty(request, m_crtcID, getCRTCPropertyId("MODE_ID"), p->mode_blob_id);
+    if (ret < 0)
+    {
+        printf("Failed to set MODE_ID %d\n", ret);
+    }
+
+    ret =  m_drmlib.drmModeAtomicAddProperty(request, m_crtcID, getCRTCPropertyId("ACTIVE"), 1);
+    if (ret < 0)
+    {
+        printf("Failed to set active %d\n", ret);
+    }
+
+    // ret = m_drmlib.drmModeAtomicCommit(m_fd, request, DRM_MODE_ATOMIC_TEST_ONLY, NULL);
+    // if (ret < 0)
+    //     printf("Failed to commit\n");
+
+    ret = m_drmlib.drmModeAtomicCommit(m_fd, request, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+    if (ret < 0)
+        printf("HDR enable/disable failed %d.\n", ret);
+    
+    m_drmlib.drmModeAtomicFree(request);
+}
+
+// switch HDR off
+void drmRenderer::drm_destroy_hdrinfo() {
+    drm_send_hdr(NULL, false);
+
+    if (m_hdr_metadata.hdr_blob_id) {
+        m_drmlib.drmModeDestroyPropertyBlob(m_fd, m_hdr_metadata.hdr_blob_id);        
+     }
+
+     if (m_hdr_metadata.mode_blob_id) {
+        m_drmlib.drmModeDestroyPropertyBlob(m_fd, m_hdr_metadata.mode_blob_id);        
+     }
 }
 
 void* drmRenderer::acquire(mfxMemId mid)
@@ -422,7 +652,7 @@ void* drmRenderer::acquire(mfxMemId mid)
         int ret = m_drmlib.drmIoctl(m_fd, DRM_IOCTL_GEM_OPEN, &flink_open);
         if (ret) return NULL;
 
-        uint32_t handles[4], pitches[4], offsets[4], pixel_format, flags = 0;
+        uint32_t handles[4], pitches[4], offsets[4], flags = 0;
         uint64_t modifiers[4];
 
         memset(&handles, 0, sizeof(handles));
@@ -434,10 +664,15 @@ void* drmRenderer::acquire(mfxMemId mid)
         pitches[0] = vmid->m_image.pitches[0];
         offsets[0] = vmid->m_image.offsets[0];
 
-        if (VA_FOURCC_NV12 == vmid->m_fourcc) {
+
+        //P010 is a planar 4:2:0 YUV with interleaved UV plane, 10 bits per channel
+        if (VA_FOURCC_NV12 == vmid->m_fourcc || VA_FOURCC_P010 == vmid->m_fourcc) {
             struct drm_i915_gem_set_tiling set_tiling;
 
-            pixel_format = DRM_FORMAT_NV12;
+            if (VA_FOURCC_P010 == vmid->m_fourcc)
+                m_needed_pixelFMT = DRM_FORMAT_P010;
+            else
+                m_needed_pixelFMT = DRM_FORMAT_NV12;
             memset(&set_tiling, 0, sizeof(set_tiling));
             set_tiling.handle = flink_open.handle;
             set_tiling.tiling_mode = I915_TILING_Y;
@@ -455,11 +690,14 @@ void* drmRenderer::acquire(mfxMemId mid)
             flags = 2; // DRM_MODE_FB_MODIFIERS   (1<<1) /* enables ->modifer[]
        }
        else {
-            pixel_format = DRM_FORMAT_XRGB8888;
+            if (VA_FOURCC_A2R10G10B10 == vmid->m_fourcc)
+                m_needed_pixelFMT = DRM_FORMAT_ARGB2101010; // Use DRM_FORMAT_XRGB2101010?
+            else
+                m_needed_pixelFMT = DRM_FORMAT_XRGB8888;
        }
-
+        
         ret = m_drmlib.drmModeAddFB2WithModifiers(m_fd, vmid->m_image.width, vmid->m_image.height,
-              pixel_format, handles, pitches, offsets, modifiers, &fbhandle, flags);
+              m_needed_pixelFMT, handles, pitches, offsets, modifiers, &fbhandle, flags);
         if (ret) return NULL;
 
         MSDK_ZERO_MEMORY(flink_close);
@@ -506,6 +744,18 @@ mfxStatus drmRenderer::render(mfxFrameSurface1 * pSurface)
     }
     if ((m_mode.hdisplay == memid->m_image.width) &&
         (m_mode.vdisplay == memid->m_image.height)) {
+
+        // TODO: add flag to allow HDR
+        if (m_planeFMT == DRM_FORMAT_P010 || m_planeFMT == DRM_FORMAT_ARGB2101010)
+        {
+            if (!m_sentHDR)
+            {
+                drm_send_bt2020_colorspace();
+                drm_send_hdr(pSurface, true);
+                m_sentHDR = true;
+            }
+        }
+        
         // surface in the framebuffer exactly matches crtc scanout port, so we
         // can scanout from this framebuffer for the whole crtc
         ret = m_drmlib.drmModeSetCrtc(m_fd, m_crtcID, fbhandle, 0, 0, &m_connectorID, 1, &m_mode);

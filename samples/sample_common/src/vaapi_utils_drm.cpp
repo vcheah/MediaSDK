@@ -329,6 +329,25 @@ bool drmRenderer::setupConnection(drmModeRes *resource, drmModeConnector* connec
     // we will use the first available mode - that's always mode with the highest resolution
     m_mode = connector->modes[0];
 
+    // Hack: forced to setmode 8K@60
+#if 1
+    m_mode.clock=2376000;
+    m_mode.hdisplay=7680;
+    m_mode.vdisplay=4320;
+    m_mode.hsync_start=8232;
+    m_mode.hsync_end=8408;
+    m_mode.htotal=9000;
+    m_mode.vtotal=4400;
+    m_mode.vrefresh=60;
+    m_mode.vsync_start=4336;
+    m_mode.vsync_end=4356;
+    m_mode.hskew=0;
+    m_mode.vscan=0;
+    m_mode.flags=0;
+    m_mode.type=0;
+    strcpy(m_mode.name, "7680x4320");
+#endif
+
     // trying encoder+crtc which are currently attached to connector
     m_encoderID = connector->encoder_id;
     encoder = m_drmlib.drmModeGetEncoder(m_fd, m_encoderID);
@@ -382,8 +401,10 @@ bool drmRenderer::setupConnection(drmModeRes *resource, drmModeConnector* connec
     return ret;
 }
 
+
 bool drmRenderer::getPlane()
 {
+    bool flag=true;
     drmModePlaneResPtr planes = m_drmlib.drmModeGetPlaneResources(m_fd);
     if (!planes) {
         return false;
@@ -399,7 +420,11 @@ bool drmRenderer::getPlane()
                         || (plane->formats[j] == DRM_FORMAT_NV12)
                         || (plane->formats[j] == DRM_FORMAT_P010)
                         || (plane->formats[j] == DRM_FORMAT_ARGB2101010)) {
-                        m_planeID = plane->plane_id;                        
+			if (flag)
+			{
+                            m_planeID = plane->plane_id;
+                            flag=false;
+			}
                         isPlaneFound = true;
                         if (plane->formats[j] == DRM_FORMAT_P010
                             || (plane->formats[j] == DRM_FORMAT_ARGB2101010)) {
